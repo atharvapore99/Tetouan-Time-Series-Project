@@ -1,0 +1,525 @@
+---
+title: "Final_submission"
+author: "Atharv Abhijeet Bagde"
+date: "2023-12-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Reading and Preparing the Data
+
+```{r}
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+library(forcats)
+library(GGally)
+
+get_period <- function(hour) {
+  if (hour >= 5 && hour < 12) {
+    return("Morning")
+  } else if (hour >= 12 && hour < 17) {
+    return("Afternoon")
+  } else if (hour >= 17 && hour < 21) {
+    return("Evening")
+  } else {
+    return("Night")
+  }
+}
+
+data = read.csv('/Users/atharvamaheshpore/Downloads/Tetuan City power consumption.csv')
+colnames(data) = c('dt','temp','humidity','wind_speed','g_diff_flow','diff_flow','zone1_pow','zone2_pow','zone3_pow')
+data$dt = gsub('/','-',data$dt)
+data$dt = strptime(data$dt, format = "%m-%d-%Y %H:%M")
+data$hour = as.numeric(hour(data$dt))
+data$month = as.numeric( month(data$dt))
+data$name_month = month(data$dt , label = T)
+data$day = wday(data$dt, label= TRUE)
+data$pow_agg = data$zone1_pow + data$zone2_pow + data$zone3_pow
+
+data$season <- case_when(
+     data$name_month %in% c("Dec", "Jan", "Feb") ~ "Winter",
+     data$name_month %in% c("Mar", "Apr", "May") ~ "Spring",
+     data$name_month %in% c("Jun", "Jul", "Aug") ~ "Summer",
+     data$name_month %in% c("Sep", "Oct", "Nov") ~ "Autumn")
+
+
+data <- data %>%
+  mutate(period = sapply(hour, get_period))
+
+long_power_data = gather(data[,7:10],key = "variable", value = "value", -hour)
+```
+
+
+
+## Plotting the Features (temperature and humidity) against Target (aggregated power) and also each other
+
+```{r}
+power_data = data[,c('temp','humidity','pow_agg')]
+ggpairs(power_data)
+```
+
+
+### Observations:
+The above plot shows that the power consumption shows a positive linear relationship with Temperature, correlation coefficient = +0.488,  and a negative linear relationship with Humidity, correlation coefficient = -0.299. Also, the distribution of the Power Consumption is trimodal, which is expected as it represents the power consumption aggregated across all 3 zones. 
+The temperature variable has a bimodal distribution where the 2 peaks occur in different seasons, the first one corresponding to Winter & Spring while the second to majorly Summer & Autumn with minor contributions from Spring.
+The humidity variable also seems to follow a bimodal distribution where the first peak occurs during the afternoon & evening period and winter months while the second peak occurs during night & morning and especially summer months March & April.
+
+
+
+### ---------------- ONLY FOR ANALYSIS PURPOSE, NOT TO BE INCLUDED IN FINAL REPORT ----------------
+
+```{r}
+data.eda = data[,c('temp', 'humidity', 'name_month', 'season', 'period')]
+
+ggplot(data.eda, aes(x = temp, color = season)) +
+  geom_density()
+
+ggplot(data.eda, aes(x = humidity)) +
+  geom_density() +
+  facet_wrap(~name_month)
+
+ggplot(data.eda, aes(x = humidity)) +
+  geom_density() +
+  facet_wrap(~season)
+
+ggplot(data.eda, aes(x = humidity)) +
+  geom_density() +
+  facet_wrap(~period)
+
+```
+
+### ---------------- ------------------------------------------------------------- ----------------
+
+
+
+```{r}
+p_day = ggplot(data = data, aes(y= pow_agg, x = hour))+
+        geom_point()+
+        geom_smooth()+
+        theme_minimal() +
+        labs(x = "Hour", y = "Power (kwh)", title = "Power consumption trends")
+  
+p_week = ggplot(data = data, aes(y= pow_agg, x = factor(day)))+
+        geom_boxplot()+
+        theme_minimal() +
+        labs(x = "Day", y = "Power (kwh)")
+
+p_month = ggplot(data = data, aes(y= pow_agg, x = factor(month)))+
+        geom_boxplot()+
+        theme_minimal() +
+        labs(x = "Month", y = "Power (kwh)")
+
+
+p_day / p_week / p_month
+
+```
+
+
+### Observations:
+From the above plot, we can see that the power consumption exhibits variations with hour which shows daily trend in the power consumption while the monthly variations show annual trend. The power consumed each day doesn't vary much with the day of the week which is evident from its boxplot above.
+
+
+
+
+
+```{r}
+ggplot(data, aes(x = temp, y = pow_agg)) +
+  geom_point() +
+  geom_smooth(method = "loess", span = 1, 
+              method.args = list(degree = 1, family = "symmetric"), 
+              se = FALSE) +
+  facet_wrap(~cut_number(humidity, n=3)+season) +
+  ggtitle("Humidity effect across months")
+
+```
+
+
+### Observations:
+The above plot shows that the rate of power consumption varies with the temperature along with the season and humidity.
+During high humidity days, the rate is higher than that during the low humidity days, where the power consumption shows little variation with temperature. Also, the rate is significantly higher during summer days as compared to the other seasons.
+This is kinda counter-intuitive because humidity is negatively correlated with power consumption so the temperature effect could be playing a significant role here.
+
+
+```{r}
+ggplot(data, aes(x = humidity, y = pow_agg)) +
+  geom_point() +
+  geom_smooth(method = "loess", span = 1,
+              method.args = list(degree = 1, family = "symmetric"),
+              se = FALSE) +
+  facet_wrap(~cut_number(temp, n=3)+season) +
+  ggtitle("Humidity effect across months")
+```
+
+
+### Observations:
+This plot shows that the power consumption decreases with the increase in humidity as expected from the negative coefficient of correlation between them. However, the temperature plays an important role in changing the rate of change of power consumption w.r.t the humidity as the rate shrinks towards zero with increase in temperature during Autumn & Spring season while during the summer it shows decline in power consumption with increase in humidity which is normal.
+An interesting observation is very little data for low temperature days in Summer season and no data for high temperature days in Winter season which shows that such days hardly occur during these seasons and so we should not make any predictions for data in this region, which we'll avoid in the modelling phase, as the available data is not enough to recognize the trend or pattern. 
+
+
+```{r}
+ggplot(data, aes(x = temp, y = pow_agg)) +
+  geom_point() +
+  geom_smooth(method = "loess", span = 1, 
+              method.args = list(degree = 1, family = "symmetric"),
+              se = FALSE) +
+  facet_wrap(~cut_number(humidity, n=3)+period) +
+  ggtitle("Humidity effect across the day")
+
+```
+
+
+### Observations:
+The plot shows that the power consumption generally increases with increase in temperature with high rate of increase for most periods of day and humidity excluding the afternoons and mornings with high humidity where the rate is very low.
+
+
+```{r}
+ggplot(data, aes(x = humidity, y = pow_agg)) +
+  geom_point() +
+  geom_smooth(method = "loess", span = 1, 
+              method.args = list(degree = 1, family = "symmetric"),
+              se = FALSE) +
+  facet_wrap(~cut_number(temp, n=3)+period) +
+  ggtitle("Humidity effect across the day")
+```
+
+
+### Observations:
+From the above plot, we can see that the rate of change of power consumption with humidity is very low for most periods of day and most humidity range except for mornings and nights where the usual decline in power consumption with increase in humidity is seen. Also, during the evenings with medium temperature the power consumption shows rise with increae in humidity, which can be further investigated.
+
+
+```{r}
+data$hour<- as.numeric(data$hour)
+data$power_added <- data$zone1_pow + data$zone2_pow + data$zone3_pow
+
+
+tetuan.lo1 <- loess(power_added ~ temp * hour * humidity * month, data = data, degree = 1)
+
+
+result_df <- aggregate(power_added ~ month, data = data, FUN = mean)
+
+
+
+ggplot(result_df, aes(x = month, y = power_added)) +
+  geom_point() +
+  geom_line()
+
+library(broom)
+library(tidyverse)
+tetuan.lo1.df <- augment(tetuan.lo1)
+ggplot(tetuan.lo1.df, aes(x = temp, y = .resid)) +
+  geom_point() + geom_smooth(method = "gam")
+
+ggplot(tetuan.lo1.df, aes(x = humidity, y = .resid)) +
+  geom_point() + geom_smooth(method = "gam")
+ggplot(tetuan.lo1.df, aes(x = .fitted, y = abs(.resid))) +
+  geom_point() + geom_smooth(method = "lm")
+
+```
+
+
+```{r}
+# Create initial grid without month_numeric
+library(tidyverse)
+loess.grid = expand.grid(
+  humidity = seq(12:94),
+  temp = ifelse(rep(1:12, each = 2) %in% c(4, 5, 6, 7), seq(20, 40, by = 4), seq(3, 20, by = 4)),
+  hour = rep(0:23, each = 12)
+)
+
+# Add month_numeric to the grid
+loess.grid$month = rep(1:12, times = 24) 
+
+# Filter out rows where hour is greater than 20 and temp is greater than 20
+loess.grid = subset(loess.grid, !(hour > 20 & temp > 20))
+
+tetuan.predict <- predict(tetuan.lo1, newdata = loess.grid)
+tetuan.predict.df <- data.frame(loess.grid, power_added = as.vector(tetuan.predict))
+
+
+result_df <- aggregate(power_added ~ month, data = tetuan.predict.df, FUN = mean)
+
+
+ggplot(result_df, aes(x = month, y = power_added)) +
+  geom_point() +
+  geom_smooth(method='gam')
+
+```
+
+
+
+
+
+```{r}
+
+
+tetuan.lo1 <- loess(power_added ~ temp * hour * humidity , data = data, degree = 1, span=0.75)
+
+
+
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Generate data for expand.grid for temperature
+min_temp_morning <- seq(25, 40, by = 1)
+max_temp_morning <- seq(28, 40, by = 1)
+min_temp_afternoon <- seq(30, 40, by = 1)
+max_temp_afternoon <- seq(35, 40, by = 1)
+min_temp_evening <- seq(18, 25, by = 1)
+max_temp_evening <- seq(20, 25, by = 1)
+min_temp_night <- seq(18, 25, by = 1)
+max_temp_night <- seq(20, 25, by = 1)
+
+# Generate data for expand.grid for humidity
+min_humidity_morning <- seq(20, 40, by = 1)
+max_humidity_morning <- seq(30, 60, by = 1)
+min_humidity_afternoon <- seq(40, 70, by = 1)
+max_humidity_afternoon <- seq(60, 80, by = 1)
+min_humidity_evening <- seq(50, 80, by = 1)
+max_humidity_evening <- seq(70, 90, by = 1)
+min_humidity_night <- seq(30, 50, by = 1)
+max_humidity_night <- seq(40, 60, by = 1)
+
+# Create expand.grid for temperature with additional Temp column
+grid_data_temp <- expand.grid(
+  Temp = rep(c("Morning", "Afternoon", "Evening", "Night"), each = length(hours)),
+  Min_Temperature = rep(c(seq(25, 40, by = 1), seq(30, 40, by = 1), seq(18, 25, by = 1), seq(18, 25, by = 1)), each = length(hours)),
+  Max_Temperature = rep(c(seq(28, 40, by = 1), seq(35, 40, by = 1), seq(20, 25, by = 1), seq(20, 25, by = 1)), each = length(hours))
+)
+
+# Generate data for expand.grid for humidity
+grid_data_humidity <- expand.grid(
+  Humidity = rep(c("Morning", "Afternoon", "Evening", "Night"), each = length(hours)),
+  Min_Humidity = rep(c(seq(20, 40, by = 1), seq(40, 70, by = 1), seq(50, 80, by = 1), seq(30, 50, by = 1)), each = length(hours)),
+  Max_Humidity = rep(c(seq(30, 60, by = 1), seq(60, 80, by = 1), seq(70, 90, by = 1), seq(40, 60, by = 1)), each = length(hours))
+)
+
+# Manually add the "Hours" variable
+grid_data_temp$Hours <- rep(hours, each = 4 * length(hours))
+grid_data_humidity$Hours <- rep(hours, each = 4 * length(hours))
+
+# Combine temperature and humidity data frames
+combined_grid_data <- merge(grid_data_temp, grid_data_humidity, by = c("Hours", "Temp", "Humidity"))
+
+# Combine temperature and humidity data frames
+combined_grid_data <- merge(grid_data_temp, grid_data_humidity, by = c("Hours", "Temp", "Humidity"))
+
+# Print the first few rows of the resulting data frame
+head(combined_grid_data)
+
+
+
+
+# Print the first few rows of the resulting data frame
+head(filtered_data)
+filtered_data$Temp <- (filtered_data$Min_Temperature + filtered_data$Max_Temperature) / 2
+
+filtered_data <- subset(filtered_data, select = -Max_Temperature)
+
+# Rename columns
+colnames(filtered_data) <- c("temp", "hour", "humidity")
+
+tetuan.predict1 <- predict(tetuan.lo1, newdata = filtered_data)
+tetuan.predict1.df <- data.frame(filtered_data, power_added = as.vector(tetuan.predict1))
+
+tetuan.predict1.df
+
+tetuan.predict1.df$temp_category <- cut(tetuan.predict1.df$temp, breaks = c( 18, 25, 32,40), labels = c("low", "medium", "high"), include.lowest = TRUE)
+
+
+tetuan.predict1.df$humidity_cat <- cut(tetuan.predict1.df$humidity, breaks = c(12, 35, 60, 84), labels = c("low", "medium", "high"), include.lowest = TRUE)
+# Print the updated dataframe
+august
+
+ggplot(tetuan.predict1.df, aes(x = hour, y = power_added, group = humidity_cat, color = humidity_cat)) +
+  geom_line() +
+  facet_wrap(~temp_category, scales = "free_y") +
+  labs(x = "Hour", y = "Power Added") +
+  theme_minimal()
+
+```
+```{r}
+
+
+august<- data[data$month==8,]
+temp_model<-loess(temp ~ hour , data = august, degree = 1, span=0.75)
+
+
+num_values <- 10000
+
+# Create a data frame with num_values random values for "hour" from 0 to 23
+hour_values <- data.frame(hour = sample(0:23, num_values, replace = TRUE))
+hour_values
+# Use the predict function to generate predicted values for temperature
+predicted_values <- predict(temp_model, newdata = hour_values)
+
+
+result_df <- data.frame(hour = hour_values$hour, predicted_temp = predicted_values)
+
+result_df
+
+ggplot(august, aes(x=hour, y=temp)) +geom_point()+ geom_smooth(method='gam')
+
+ggplot(result_df, aes(x=hour, y=predicted_values)) +geom_point()+ geom_smooth(method='gam')
+
+```
+
+
+
+
+
+```{r}
+humidity_model<-loess(humidity ~ hour , data = august, degree = 1, span=0.75)
+
+
+num_values <- 10000
+
+# Create a data frame with num_values random values for "hour" from 0 to 23
+hour_values <- data.frame(hour = sample(0:23, num_values, replace = TRUE))
+hour_values
+# Use the predict function to generate predicted values for temperature
+predicted_values2 <- predict(humidity_model, newdata = hour_values)
+
+
+result_df2 <- data.frame(hour = hour_values$hour, predicted_hum = predicted_values2)
+
+result_df2
+
+ggplot(august, aes(x=hour, y=humidity)) +geom_point()+ geom_smooth(method='gam')
+
+ggplot(result_df2, aes(x=hour, y=predicted_values2)) +geom_point()+ geom_smooth(method='gam')
+
+```
+
+
+
+
+
+```{r}
+merged_df <- full_join(result_df, result_df2, by = "hour")
+
+merged_df
+names(merged_df)[names(merged_df) == "predicted_temp"] <- "temp"
+names(merged_df)[names(merged_df) == "predicted_hum"] <- "humidity"
+
+tetuan.predict <- predict(tetuan.lo1, newdata = merged_df)
+tetuan.predict.df <- data.frame(merged_df, power_added = as.vector(tetuan.predict))
+
+
+ggplot(tetuan.predict.df, aes(x=hour, y=power_added))+geom_point()+ geom_smooth(method='gam')
+
+
+
+tetuan.predict.df$temp_category <- cut(tetuan.predict.df$temp, breaks = c( 18, 25, 32,40), labels = c("low", "medium", "high"), include.lowest = TRUE)
+
+
+tetuan.predict.df$humidity_cat <- cut(tetuan.predict.df$humidity, breaks = c(12, 35, 60, 84), labels = c("low", "medium", "high"), include.lowest = TRUE)
+# Print the updated dataframe
+august
+
+ggplot(tetuan.predict.df, aes(x = hour, y = power_added, group = humidity_cat, color = humidity_cat)) +
+  geom_line() +
+  facet_wrap(~temp_category, scales = "free_y") +
+  labs(x = "Hour", y = "Power Added") +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+hours <- 0:23
+temperature_min <- 18
+temperature_max <- 40
+humidity_start <- 75
+humidity_end <- 50
+
+# Sine interpolation function
+sine_interpolate <- function(min_value, max_value, hours) {
+  amplitude <- (max_value - min_value) / 2
+  mean_value <- min_value + amplitude
+  amplitude * sin((pi * (hours - 6)) / 12) + mean_value
+}
+
+# Generate all combinations of the three variables
+expanded_grid <- expand.grid(
+  hour = hours,
+  temperature = sine_interpolate(temperature_min, temperature_max, hours),
+  humidity = linear_interpolate(humidity_start, humidity_end, length(hours))
+)
+
+# Print the resulting data frame
+print(expanded_grid)
+
+
+
+names(expanded_grid)[names(expanded_grid) == "temperature"] <- "temp"
+```
+
+
+
+
+```{r}
+tetuan.predict2 <- predict(tetuan.lo1, newdata = expanded_grid)
+tetuan.predict.df <- data.frame(expanded_grid, power_added = as.vector(tetuan.predict2))
+
+
+tetuan.predict.df
+
+
+tetuan.predict.df$temp_category <- cut(tetuan.predict.df$temp, breaks = c( 18, 25, 32,40), labels = c("low", "medium", "high"), include.lowest = TRUE)
+
+
+tetuan.predict.df$humidity_cat <- cut(tetuan.predict.df$humidity, breaks = c(50,58,66,75), labels = c("low", "medium", "high"), include.lowest = TRUE)
+# Print the updated dataframe
+august
+
+ggplot(tetuan.predict.df, aes(x = hour, y = power_added, group = humidity_cat, color = humidity_cat)) +
+  geom_line() +
+  facet_wrap(~temp_category, scales = "free_y") +
+  labs(x = "Hour", y = "Power Added") +
+  theme_minimal()
+```
+
+
+
+
+```{r}
+
+library(tidyverse)
+
+
+hour <- 0:23
+temperature <- c(seq(18, 40, length.out = 12), seq(40, 18, length.out = 12))
+humidity_values <- c(seq(75, 50, length.out = 12), seq(50, 75, length.out = 12))
+
+result <- expand_grid(hour = hour, temperature = temperature, humidity=humidity_values) %>%
+  arrange(hour) %>%
+  mutate(cycle_hour = rep(0:23, length.out = n()))
+
+# Display the result
+print(result)
+
+
+
+
+humidity_values
+
+```
+
+
+```{r}
+
+hour <- 0:23
+temperature <- c(seq(22, 40, length.out = 16), seq(40, 24, length.out = 8))
+
+expand_grid(hour = hour, temperature = temperature)
+
+```
